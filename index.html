@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="author" content="JoséWhite's PanaMentorLabs">
+<meta name="description" content="AGI - Asistente Groq API: chat de respaldo cuando se acaban los límites de Claude o ChatGPT">
+<meta name="theme-color" content="#0f1115">
+<title>AGI · Asistente Groq API</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root{
+    --bg:#0f1115;
+    --bg-elev:#171a21;
+    --bg-elev2:#1f232c;
+    --border:#2a2f3a;
+    --text:#e8eaed;
+    --text-dim:#9aa0ac;
+    --accent:#f55036;
+    --accent-dim:#3a1e18;
+    --user-bubble:#2a3142;
+    --bot-bubble:#1b1f27;
+    --danger:#e5484d;
+    --radius:14px;
+    font-size:16px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;margin:0;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
+  header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:12px 16px;
+    background:var(--bg-elev);
+    border-bottom:1px solid var(--border);
+    flex-shrink:0;
+  }
+  .brand{display:flex;align-items:center;gap:10px;}
+  .brand-badge{
+    width:34px;height:34px;border-radius:9px;
+    background:linear-gradient(135deg,var(--accent),#ff8a5c);
+    display:flex;align-items:center;justify-content:center;
+    font-weight:800;font-size:14px;color:#fff;flex-shrink:0;
+  }
+  .brand-text h1{font-size:15px;margin:0;line-height:1.2;}
+  .brand-text p{font-size:11px;margin:0;color:var(--text-dim);}
+  .header-actions{display:flex;gap:6px;}
+  .icon-btn{
+    background:transparent;border:1px solid var(--border);color:var(--text-dim);
+    width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;font-size:16px;
+  }
+  .icon-btn:active{background:var(--bg-elev2);}
+
+  #chat{
+    flex:1;overflow-y:auto;padding:16px 12px 8px;
+    display:flex;flex-direction:column;gap:12px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .empty-state{
+    margin:auto;text-align:center;color:var(--text-dim);padding:32px 24px;max-width:420px;
+  }
+  .empty-state .big-icon{font-size:40px;margin-bottom:10px;}
+  .empty-state h2{color:var(--text);font-size:17px;margin:0 0 8px;}
+  .empty-state p{font-size:13.5px;line-height:1.5;margin:0 0 4px;}
+
+  .msg-row{display:flex;gap:8px;max-width:92%;}
+  .msg-row.user{align-self:flex-end;flex-direction:row-reverse;}
+  .msg-row.assistant{align-self:flex-start;}
+  .avatar{
+    width:26px;height:26px;border-radius:50%;flex-shrink:0;margin-top:2px;
+    display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;
+  }
+  .msg-row.user .avatar{background:var(--accent);color:#fff;}
+  .msg-row.assistant .avatar{background:var(--bg-elev2);color:var(--text-dim);}
+  .bubble{
+    padding:10px 13px;border-radius:var(--radius);font-size:14.5px;line-height:1.5;
+    white-space:pre-wrap;word-wrap:break-word;
+  }
+  .msg-row.user .bubble{background:var(--user-bubble);border-bottom-right-radius:4px;}
+  .msg-row.assistant .bubble{background:var(--bot-bubble);border:1px solid var(--border);border-bottom-left-radius:4px;}
+  .bubble code{
+    background:#00000055;padding:1px 5px;border-radius:4px;font-size:13px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  .bubble pre{
+    background:#00000055;padding:10px;border-radius:8px;overflow-x:auto;margin:6px 0;
+  }
+  .bubble pre code{background:none;padding:0;}
+  .msg-meta{font-size:10px;color:var(--text-dim);margin-top:3px;padding:0 4px;}
+  .msg-row.user .msg-meta{text-align:right;}
+
+  .typing{display:flex;gap:4px;padding:6px 2px;}
+  .typing span{
+    width:6px;height:6px;border-radius:50%;background:var(--text-dim);
+    animation:blink 1.2s infinite ease-in-out;
+  }
+  .typing span:nth-child(2){animation-delay:.2s;}
+  .typing span:nth-child(3){animation-delay:.4s;}
+  @keyframes blink{0%,80%,100%{opacity:.25;}40%{opacity:1;}}
+
+  .error-bubble{
+    background:#2a1416;border:1px solid #5a2328;color:#ff9b9e;
+    padding:10px 13px;border-radius:var(--radius);font-size:13.5px;max-width:92%;align-self:flex-start;
+  }
+
+  #composer{
+    flex-shrink:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    background:var(--bg-elev);border-top:1px solid var(--border);
+  }
+  .composer-row{display:flex;align-items:flex-end;gap:8px;}
+  #model-select{
+    background:var(--bg-elev2);color:var(--text-dim);border:1px solid var(--border);
+    border-radius:8px;font-size:11px;padding:3px 6px;margin-bottom:6px;max-width:100%;
+  }
+  #input-wrap{
+    flex:1;display:flex;align-items:flex-end;background:var(--bg-elev2);
+    border:1px solid var(--border);border-radius:20px;padding:8px 6px 8px 14px;
+  }
+  #msg-input{
+    flex:1;background:transparent;border:none;outline:none;color:var(--text);
+    font-size:15px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;padding:2px 0;
+  }
+  #msg-input::placeholder{color:var(--text-dim);}
+  #send-btn{
+    width:36px;height:36px;border-radius:50%;background:var(--accent);border:none;
+    color:#fff;font-size:16px;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;flex-shrink:0;transition:opacity .15s;
+  }
+  #send-btn:disabled{opacity:.4;}
+  .model-row{display:flex;justify-content:space-between;align-items:center;}
+
+  /* Settings modal */
+  .modal-overlay{
+    position:fixed;inset:0;background:#000000b0;display:none;
+    align-items:flex-end;justify-content:center;z-index:50;
+  }
+  .modal-overlay.open{display:flex;}
+  .modal{
+    background:var(--bg-elev);border-radius:18px 18px 0 0;width:100%;max-width:480px;
+    padding:20px 20px calc(20px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);max-height:85vh;overflow-y:auto;
+  }
+  .modal h3{margin:0 0 4px;font-size:17px;}
+  .modal p.sub{color:var(--text-dim);font-size:12.5px;margin:0 0 16px;line-height:1.5;}
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:12px;color:var(--text-dim);margin-bottom:6px;}
+  .field input, .field select{
+    width:100%;background:var(--bg-elev2);border:1px solid var(--border);color:var(--text);
+    padding:11px 12px;border-radius:10px;font-size:14px;
+  }
+  .field .hint{font-size:11px;color:var(--text-dim);margin-top:5px;line-height:1.4;}
+  .field .hint a{color:var(--accent);}
+  .modal-actions{display:flex;gap:10px;margin-top:18px;}
+  .btn{
+    flex:1;padding:12px;border-radius:10px;border:none;font-size:14px;font-weight:600;
+    cursor:pointer;
+  }
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-secondary{background:var(--bg-elev2);color:var(--text);border:1px solid var(--border);}
+  .btn-danger{background:transparent;color:var(--danger);border:1px solid #5a2328;}
+  .toast{
+    position:fixed;bottom:90px;left:50%;transform:translateX(-50%);
+    background:var(--bg-elev2);color:var(--text);padding:10px 16px;border-radius:30px;
+    font-size:13px;border:1px solid var(--border);z-index:60;opacity:0;pointer-events:none;
+    transition:opacity .25s;
+  }
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="brand-badge">AG</div>
+    <div class="brand-text">
+      <h1>AGI</h1>
+      <p>Asistente Groq API</p>
+    </div>
+  </div>
+  <div class="header-actions">
+    <button class="icon-btn" id="clear-chat-btn" title="Nueva conversación">🗑️</button>
+    <button class="icon-btn" id="settings-btn" title="Configuración">⚙️</button>
+  </div>
+</header>
+
+<div id="chat">
+  <div class="empty-state" id="empty-state">
+    <div class="big-icon">🤖</div>
+    <h2>AGI — tu respaldo cuando se acaban los límites</h2>
+    <p>Corre sobre la capa gratuita de Groq (Llama 3.3 70B). Rápido, gratis, y listo cuando Claude o ChatGPT te corten por límite.</p>
+    <p>Toca ⚙️ para poner tu API key de Groq y empezar.</p>
+  </div>
+</div>
+
+<div id="composer">
+  <div class="model-row">
+    <select id="model-select"></select>
+  </div>
+  <div class="composer-row">
+    <div id="input-wrap">
+      <textarea id="msg-input" placeholder="Escribe un mensaje…" rows="1"></textarea>
+    </div>
+    <button id="send-btn" title="Enviar">➤</button>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div class="modal-overlay" id="settings-overlay">
+  <div class="modal">
+    <h3>Configuración</h3>
+    <p class="sub">Tu API key se guarda solo en este dispositivo (localStorage), nunca sale a ningún servidor nuestro — va directo de tu navegador a Groq.</p>
+
+    <div class="field">
+      <label for="api-key-input">API key de Groq</label>
+      <input type="password" id="api-key-input" placeholder="gsk_...">
+      <div class="hint">Consíguela gratis en <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a></div>
+    </div>
+
+    <div class="field">
+      <label for="system-prompt-input">Instrucción del sistema (opcional)</label>
+      <input type="text" id="system-prompt-input" placeholder="Ej: Responde en español, sé directo y conciso">
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="settings-cancel-btn">Cancelar</button>
+      <button class="btn btn-primary" id="settings-save-btn">Guardar</button>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="clear-cache-btn">Limpiar caché de la app</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+
+  const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+  const MODELS = [
+    { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (recomendado)" },
+    { id: "llama-3.1-8b-instant",    label: "Llama 3.1 8B (rápido)" },
+    { id: "deepseek-r1-distill-llama-70b", label: "DeepSeek R1 Distill 70B (razonamiento)" },
+    { id: "qwen/qwen3-32b",          label: "Qwen3 32B" }
+  ];
+  const STORAGE_KEY_API   = "agi_groq_api_key";
+  const STORAGE_KEY_SYS   = "agi_system_prompt";
+  const STORAGE_KEY_MODEL = "agi_model";
+  const STORAGE_KEY_HIST  = "agi_chat_history";
+
+  const chatEl = document.getElementById("chat");
+  const emptyState = document.getElementById("empty-state");
+  const inputEl = document.getElementById("msg-input");
+  const sendBtn = document.getElementById("send-btn");
+  const modelSelect = document.getElementById("model-select");
+  const settingsBtn = document.getElementById("settings-btn");
+  const clearChatBtn = document.getElementById("clear-chat-btn");
+  const settingsOverlay = document.getElementById("settings-overlay");
+  const settingsCancelBtn = document.getElementById("settings-cancel-btn");
+  const settingsSaveBtn = document.getElementById("settings-save-btn");
+  const apiKeyInput = document.getElementById("api-key-input");
+  const systemPromptInput = document.getElementById("system-prompt-input");
+  const clearCacheBtn = document.getElementById("clear-cache-btn");
+  const toastEl = document.getElementById("toast");
+
+  let history = [];
+  let sending = false;
+
+  function safeGet(key, fallback){
+    try { const v = localStorage.getItem(key); return v === null ? fallback : v; }
+    catch(e){ return fallback; }
+  }
+  function safeSet(key, val){
+    try { localStorage.setItem(key, val); } catch(e){}
+  }
+
+  function showToast(msg){
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    setTimeout(()=>toastEl.classList.remove("show"), 2200);
+  }
+
+  // ---- Model select setup ----
+  MODELS.forEach(m=>{
+    const opt = document.createElement("option");
+    opt.value = m.id; opt.textContent = m.label;
+    modelSelect.appendChild(opt);
+  });
+  modelSelect.value = safeGet(STORAGE_KEY_MODEL, MODELS[0].id);
+  modelSelect.addEventListener("change", ()=> safeSet(STORAGE_KEY_MODEL, modelSelect.value));
+
+  // ---- History load ----
+  function loadHistory(){
+    try {
+      const raw = safeGet(STORAGE_KEY_HIST, "[]");
+      history = JSON.parse(raw);
+    } catch(e){ history = []; }
+    if (history.length) {
+      emptyState.style.display = "none";
+      history.forEach(m => renderMessage(m.role, m.content, false));
+    }
+  }
+  function saveHistory(){
+    try { safeSet(STORAGE_KEY_HIST, JSON.stringify(history.slice(-60))); } catch(e){}
+  }
+
+  // ---- Rendering ----
+  function escapeHtml(str){
+    return str.replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[c]));
+  }
+  function formatContent(str){
+    let safe = escapeHtml(str);
+    safe = safe.replace(/```([\s\S]*?)```/g, (m, code) => "<pre><code>" + code.trim() + "</code></pre>");
+    safe = safe.replace(/`([^`]+)`/g, "<code>$1</code>");
+    return safe;
+  }
+  function renderMessage(role, content, scroll){
+    emptyState.style.display = "none";
+    const row = document.createElement("div");
+    row.className = "msg-row " + role;
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.textContent = role === "user" ? "Tú" : "AG";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.innerHTML = formatContent(content);
+    row.appendChild(avatar);
+    row.appendChild(bubble);
+    chatEl.appendChild(row);
+    if (scroll !== false) chatEl.scrollTop = chatEl.scrollHeight;
+    return bubble;
+  }
+  function renderTyping(){
+    const row = document.createElement("div");
+    row.className = "msg-row assistant";
+    row.id = "typing-row";
+    const avatar = document.createElement("div");
+    avatar.className = "avatar"; avatar.textContent = "AG";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+    row.appendChild(avatar); row.appendChild(bubble);
+    chatEl.appendChild(row);
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+  function removeTyping(){
+    const r = document.getElementById("typing-row");
+    if (r) r.remove();
+  }
+  function renderError(msg){
+    const div = document.createElement("div");
+    div.className = "error-bubble";
+    div.textContent = msg;
+    chatEl.appendChild(div);
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+
+  // ---- Sending ----
+  async function sendMessage(){
+    if (sending) return;
+    const text = inputEl.value.trim();
+    if (!text) return;
+
+    const apiKey = safeGet(STORAGE_KEY_API, "");
+    if (!apiKey) {
+      openSettings();
+      showToast("Primero agrega tu API key de Groq");
+      return;
+    }
+
+    inputEl.value = "";
+    autoResize();
+    renderMessage("user", text);
+    history.push({ role: "user", content: text });
+    saveHistory();
+
+    sending = true;
+    sendBtn.disabled = true;
+    renderTyping();
+
+    const systemPrompt = safeGet(STORAGE_KEY_SYS, "");
+    const messages = [];
+    if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+    messages.push(...history.slice(-20));
+
+    try {
+      const res = await fetch(GROQ_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + apiKey
+        },
+        body: JSON.stringify({
+          model: modelSelect.value,
+          messages: messages,
+          temperature: 0.7
+        })
+      });
+
+      removeTyping();
+
+      if (!res.ok) {
+        let errMsg = "Error " + res.status;
+        try {
+          const errBody = await res.json();
+          if (errBody && errBody.error && errBody.error.message) errMsg += ": " + errBody.error.message;
+        } catch(e){}
+        if (res.status === 401) errMsg = "API key inválida o vencida. Revísala en Configuración.";
+        if (res.status === 429) errMsg = "Límite de la capa gratuita de Groq alcanzado por ahora. Intenta en unos minutos.";
+        renderError(errMsg);
+        sending = false;
+        sendBtn.disabled = false;
+        return;
+      }
+
+      const data = await res.json();
+      const reply = data.choices && data.choices[0] && data.choices[0].message
+        ? data.choices[0].message.content
+        : "(Respuesta vacía)";
+
+      renderMessage("assistant", reply);
+      history.push({ role: "assistant", content: reply });
+      saveHistory();
+
+    } catch(err) {
+      removeTyping();
+      renderError("No se pudo conectar con Groq. Revisa tu conexión a Internet.");
+    }
+
+    sending = false;
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+
+  function autoResize(){
+    inputEl.style.height = "auto";
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + "px";
+  }
+
+  sendBtn.addEventListener("click", sendMessage);
+  inputEl.addEventListener("input", autoResize);
+  inputEl.addEventListener("keydown", e=>{
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  // ---- Clear chat ----
+  clearChatBtn.addEventListener("click", ()=>{
+    if (!history.length) return;
+    if (!confirm("¿Borrar la conversación actual?")) return;
+    history = [];
+    saveHistory();
+    chatEl.innerHTML = "";
+    chatEl.appendChild(emptyState);
+    emptyState.style.display = "flex";
+  });
+
+  // ---- Settings modal ----
+  function openSettings(){
+    apiKeyInput.value = safeGet(STORAGE_KEY_API, "");
+    systemPromptInput.value = safeGet(STORAGE_KEY_SYS, "");
+    settingsOverlay.classList.add("open");
+  }
+  function closeSettings(){ settingsOverlay.classList.remove("open"); }
+
+  settingsBtn.addEventListener("click", openSettings);
+  settingsCancelBtn.addEventListener("click", closeSettings);
+  settingsOverlay.addEventListener("click", e=>{ if (e.target === settingsOverlay) closeSettings(); });
+
+  settingsSaveBtn.addEventListener("click", ()=>{
+    const key = apiKeyInput.value.trim();
+    const sys = systemPromptInput.value.trim();
+    safeSet(STORAGE_KEY_API, key);
+    safeSet(STORAGE_KEY_SYS, sys);
+    closeSettings();
+    showToast("Configuración guardada");
+  });
+
+  clearCacheBtn.addEventListener("click", async ()=>{
+    if (!confirm("Esto borra la caché de la app (no tu API key ni tu historial). ¿Continuar?")) return;
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    if (navigator.serviceWorker) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+    showToast("Caché limpiada — recarga la app");
+  });
+
+  // ---- Service worker ----
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", ()=>{
+      navigator.serviceWorker.register("sw.js").catch(()=>{});
+    });
+  }
+
+  // ---- Init ----
+  loadHistory();
+  inputEl.focus();
+})();
+</script>
+</body>
+</html>

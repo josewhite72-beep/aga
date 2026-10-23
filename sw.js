@@ -1,0 +1,40 @@
+// AGI - Asistente Groq API — service worker (network-first, mismo patrón que el resto de PanaMentorLabs)
+const CACHE_NAME = "agi-cache-v1";
+const APP_SHELL = ["./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
+
+self.addEventListener("install", event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)).catch(()=>{})
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+    )
+  );
+  self.clients.claim();
+});
+
+self.addEventListener("fetch", event => {
+  const req = event.request;
+
+  // Nunca cachear llamadas a la API de Groq — siempre red.
+  if (req.url.includes("api.groq.com")) {
+    event.respondWith(fetch(req));
+    return;
+  }
+
+  // Network-first para todo lo demás, con fallback a caché si no hay red.
+  event.respondWith(
+    fetch(req)
+      .then(res => {
+        const resClone = res.clone();
+        caches.open(CACHE_NAME).then(cache => cache.put(req, resClone)).catch(()=>{});
+        return res;
+      })
+      .catch(() => caches.match(req))
+  );
+});
