@@ -219,6 +219,11 @@
     display:none;background:var(--bg-elev2);color:var(--text-dim);border:1px solid var(--accent);
     border-radius:8px;font-size:11px;padding:3px 6px;
   }
+  #flow-link{
+    display:none;font-size:11px;color:var(--accent);text-decoration:none;
+    border:1px solid var(--border);border-radius:8px;padding:3px 8px;white-space:nowrap;
+  }
+  .gen-flow{display:inline-block;margin:6px 0 0 12px;font-size:12px;color:var(--text-dim);text-decoration:none;}
   .gen-image{max-width:100%;border-radius:10px;display:block;margin-bottom:6px;}
   .gen-caption{font-size:11.5px;color:var(--text-dim);line-height:1.4;}
   .gen-dl{display:inline-block;margin-top:6px;font-size:12px;color:var(--accent);text-decoration:none;}
@@ -274,6 +279,7 @@
       <option value="fantasia">Fantasía</option>
       <option value="foto">Fotorrealista</option>
     </select>
+    <a id="flow-link" href="https://labs.google/fx/tools/flow" target="_blank" rel="noopener" title="Abrir Google Flow para imágenes de mejor calidad">Abrir Flow ↗</a>
   </div>
   <div id="file-chip-row">
     <div class="file-chip">
@@ -1044,6 +1050,14 @@
     dl.textContent = "⬇ Descargar imagen";
     bubble.appendChild(dl);
 
+    const flow = document.createElement("a");
+    flow.className = "gen-flow";
+    flow.href = "https://labs.google/fx/tools/flow";
+    flow.target = "_blank";
+    flow.rel = "noopener";
+    flow.textContent = "¿No quedó bien? Prueba en Flow ↗";
+    bubble.appendChild(flow);
+
     col.appendChild(bubble);
     row.appendChild(avatar);
     row.appendChild(col);
@@ -1159,6 +1173,7 @@
     imageMode = !imageMode;
     imageModeBtn.classList.toggle("active", imageMode);
     styleSelect.style.display = imageMode ? "inline-block" : "none";
+    document.getElementById("flow-link").style.display = imageMode ? "inline-block" : "none";
     inputEl.placeholder = imageMode ? "Describe la imagen que quieres…" : "Escribe un mensaje…";
     showToast(imageMode ? "Modo imagen: gratis, puede tardar por la cola" : "Modo chat");
   });
