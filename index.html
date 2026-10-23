@@ -208,6 +208,21 @@
   }
   .toast.show{opacity:1;}
 
+  /* Image mode */
+  #image-mode-btn{
+    width:40px;height:40px;border-radius:50%;background:transparent;border:1px solid var(--border);
+    color:var(--text-dim);font-size:17px;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;flex-shrink:0;
+  }
+  #image-mode-btn.active{background:var(--accent-dim);border-color:var(--accent);color:var(--text);}
+  #style-select{
+    display:none;background:var(--bg-elev2);color:var(--text-dim);border:1px solid var(--accent);
+    border-radius:8px;font-size:11px;padding:3px 6px;
+  }
+  .gen-image{max-width:100%;border-radius:10px;display:block;margin-bottom:6px;}
+  .gen-caption{font-size:11.5px;color:var(--text-dim);line-height:1.4;}
+  .gen-dl{display:inline-block;margin-top:6px;font-size:12px;color:var(--accent);text-decoration:none;}
+
   /* Conversations drawer */
   .conv-item{
     display:flex;align-items:center;gap:10px;padding:12px 10px;border-radius:12px;
@@ -254,6 +269,11 @@
 <div id="composer">
   <div class="composer-top-row">
     <select id="model-select"></select>
+    <select id="style-select" title="Estilo de imagen">
+      <option value="infantil">Educativo / infantil</option>
+      <option value="fantasia">Fantasía</option>
+      <option value="foto">Fotorrealista</option>
+    </select>
   </div>
   <div id="file-chip-row">
     <div class="file-chip">
@@ -264,6 +284,7 @@
   <div class="composer-row">
     <input type="file" id="file-input" accept=".pdf,.docx,.txt,.md" hidden>
     <button id="attach-btn" title="Adjuntar archivo">📎</button>
+    <button id="image-mode-btn" title="Modo imagen (gratis, puede tardar)">🎨</button>
     <div id="input-wrap">
       <textarea id="msg-input" placeholder="Escribe un mensaje…" rows="1"></textarea>
     </div>
@@ -344,6 +365,29 @@
 
   const MAX_FILE_CHARS = 15000;
 
+  // AI Horde (Stable Diffusion comunitario, gratis con clave anónima)
+  const HORDE_BASE = "https://aihorde.net/api/v2/generate";
+  const HORDE_ANON_KEY = "0000000000";
+  const HORDE_HEADERS = {
+    "Client-Agent": "agi-panamentorlabs:1.0:github.com/josewhite72-beep/aga",
+    "Accept": "application/json"
+  };
+  const HORDE_TIMEOUT_MS = 4 * 60 * 1000;
+  const IMAGE_STYLES = {
+    infantil: {
+      suffix: "children's book illustration, flat cartoon style, bright friendly colors, simple shapes, clean outlines, cute",
+      negative: "scary, dark, realistic, photo, text, watermark, deformed, blurry"
+    },
+    fantasia: {
+      suffix: "fantasy illustration, epic, magical atmosphere, rich colors, highly detailed digital painting",
+      negative: "blurry, low quality, text, watermark, deformed, ugly"
+    },
+    foto: {
+      suffix: "photorealistic, ultra detailed, natural lighting, sharp focus, 50mm photograph",
+      negative: "cartoon, illustration, painting, drawing, blurry, low quality, text, watermark, deformed"
+    }
+  };
+
   const chatEl = document.getElementById("chat");
   const emptyState = document.getElementById("empty-state");
   const inputEl = document.getElementById("msg-input");
@@ -367,6 +411,9 @@
   const fileChipName = document.getElementById("file-chip-name");
   const fileChipRemove = document.getElementById("file-chip-remove");
 
+  const imageModeBtn = document.getElementById("image-mode-btn");
+  const styleSelect = document.getElementById("style-select");
+
   const conversationsBtn = document.getElementById("conversations-btn");
   const conversationsOverlay = document.getElementById("conversations-overlay");
   const conversationsCloseBtn = document.getElementById("conversations-close-btn");
@@ -377,6 +424,7 @@
   let activeId = null;
   let sending = false;
   let attachedFile = null; // { name, text }
+  let imageMode = false;
 
   function safeGet(key, fallback){
     try { const v = localStorage.getItem(key); return v === null ? fallback : v; }
@@ -640,7 +688,7 @@
 
     const meta = document.createElement("div");
     meta.className = "msg-meta";
-    if (m.role === "assistant") {
+    if (m.role === "assistant" && !m.kind) {
       if (m.viaFallback) {
         const tag = document.createElement("span");
         tag.className = "fallback-tag";
@@ -799,6 +847,12 @@
   async function sendMessage(){
     if (sending) return;
     const typed = inputEl.value.trim();
+    if (imageMode) {
+      if (!typed) return;
+      inputEl.value = "";
+      autoResize();
+      return generateImage(typed);
+    }
     if (!typed && !attachedFile) return;
 
     const groqKey = safeGet(STORAGE_KEY_API_GROQ, "");
@@ -843,7 +897,7 @@
     const systemPrompt = safeGet(STORAGE_KEY_SYS, "");
     const apiMessages = [];
     if (systemPrompt) apiMessages.push({ role: "system", content: systemPrompt });
-    conv.messages.slice(-20).forEach(m=>{
+    conv.messages.filter(m => !m.kind).slice(-20).forEach(m=>{
       apiMessages.push({ role: m.role, content: m.content });
     });
 
@@ -909,6 +963,159 @@
     sendBtn.disabled = false;
     inputEl.focus();
   }
+
+  // ===================== Image generation (AI Horde) =====================
+  function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+  async function buildImagePrompt(userText, groqKey){
+    if (!groqKey) return userText;
+    try {
+      const out = await streamChatCompletion({
+        url: GROQ_URL, apiKey: groqKey, model: "openai/gpt-oss-20b",
+        messages: [
+          { role: "system", content: "Convierte la descripción del usuario en un prompt corto en inglés para un modelo de imágenes (Stable Diffusion). Responde SOLO con el prompt en una línea, sin comillas ni explicaciones. El contenido debe ser apto para niños." },
+          { role: "user", content: userText }
+        ]
+      });
+      const clean = (out || "").trim().replace(/^["']+|["']+$/g, "");
+      return clean || userText;
+    } catch(e){
+      return userText;
+    }
+  }
+
+  function renderImageRow(src, caption, filename){
+    emptyState.style.display = "none";
+    const row = document.createElement("div");
+    row.className = "msg-row assistant";
+    const avatar = document.createElement("div");
+    avatar.className = "avatar"; avatar.textContent = "AG";
+    const col = document.createElement("div");
+    col.className = "msg-col";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+
+    const img = document.createElement("img");
+    img.className = "gen-image";
+    img.src = src;
+    img.alt = caption;
+    bubble.appendChild(img);
+
+    const cap = document.createElement("div");
+    cap.className = "gen-caption";
+    cap.textContent = caption;
+    bubble.appendChild(cap);
+
+    const dl = document.createElement("a");
+    dl.className = "gen-dl";
+    dl.href = src;
+    dl.download = filename;
+    dl.target = "_blank";
+    dl.rel = "noopener";
+    dl.textContent = "⬇ Descargar imagen";
+    bubble.appendChild(dl);
+
+    col.appendChild(bubble);
+    row.appendChild(avatar);
+    row.appendChild(col);
+    chatEl.appendChild(row);
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+
+  async function generateImage(text){
+    if (sending) return;
+    const conv = ensureActiveConversation();
+    const style = IMAGE_STYLES[styleSelect.value] || IMAGE_STYLES.infantil;
+
+    const userMsg = { role: "user", content: "🎨 " + text, displayContent: "🎨 " + text, kind: "image" };
+    renderMessage(userMsg);
+    autoTitle(conv, text);
+    conv.messages.push(userMsg);
+    touchConversation(conv);
+    updateHeaderTitle();
+    renderConvListIfOpen();
+
+    sending = true;
+    sendBtn.disabled = true;
+
+    const statusBubble = renderMessage({ role: "assistant", content: "🎨 Preparando el prompt…", kind: "image" });
+    const statusRow = statusBubble.parentElement.parentElement;
+    const setStatus = (t) => { statusBubble.textContent = t; chatEl.scrollTop = chatEl.scrollHeight; };
+
+    let jobId = null;
+    try {
+      const englishPrompt = await buildImagePrompt(text, safeGet(STORAGE_KEY_API_GROQ, ""));
+      const fullPrompt = englishPrompt + ", " + style.suffix + " ### " + style.negative;
+
+      setStatus("🎨 Enviando a la cola de AI Horde…");
+      const submit = await fetch(HORDE_BASE + "/async", {
+        method: "POST",
+        headers: { ...HORDE_HEADERS, "Content-Type": "application/json", "apikey": HORDE_ANON_KEY },
+        body: JSON.stringify({
+          prompt: fullPrompt,
+          params: {
+            sampler_name: "k_euler_a", cfg_scale: 7, steps: 25,
+            width: 512, height: 512, n: 1, karras: true, post_processing: []
+          },
+          nsfw: false, censor_nsfw: true, trusted_workers: true,
+          slow_workers: true, r2: false, shared: false
+        })
+      });
+      const submitJson = await submit.json().catch(() => ({}));
+      if (!submit.ok || !submitJson.id) {
+        throw new Error(submitJson.message || ("AI Horde respondió " + submit.status));
+      }
+      jobId = submitJson.id;
+
+      const started = Date.now();
+      while (true) {
+        if (Date.now() - started > HORDE_TIMEOUT_MS) throw new Error("Tardó demasiado (cola saturada). Intenta de nuevo en un rato.");
+        await sleep(2500);
+        const check = await (await fetch(HORDE_BASE + "/check/" + jobId, { headers: HORDE_HEADERS })).json();
+        if (check.faulted) throw new Error("El trabajo falló en AI Horde. Intenta de nuevo.");
+        if (check.done) break;
+        const pos = check.queue_position;
+        const wait = check.wait_time;
+        setStatus("🎨 Generando… " +
+          (pos !== undefined && pos > 0 ? "posición en cola: " + pos + ". " : "") +
+          (wait ? "Espera estimada: ~" + wait + " s." : ""));
+      }
+
+      const result = await (await fetch(HORDE_BASE + "/status/" + jobId, { headers: HORDE_HEADERS })).json();
+      const gen = result.generations && result.generations[0];
+      if (!gen || !gen.img) throw new Error(result.message || "No se recibió ninguna imagen.");
+      const src = gen.img.startsWith("http") ? gen.img : "data:image/webp;base64," + gen.img;
+
+      statusRow.remove();
+      renderImageRow(src, 'Prompt usado: "' + englishPrompt + '"', "agi-imagen-" + Date.now() + ".webp");
+
+      conv.messages.push({
+        role: "assistant", kind: "image",
+        content: "🎨 Imagen generada para: " + text + " (las imágenes no se guardan en el historial; descárgala al generarla)"
+      });
+      touchConversation(conv);
+      renderConvListIfOpen();
+
+    } catch(err){
+      statusRow.remove();
+      let msg = err && err.message ? err.message : "No se pudo generar la imagen.";
+      if (err instanceof TypeError) msg = "No se pudo conectar con AI Horde (red o bloqueo del navegador).";
+      renderError("🎨 " + msg);
+      if (jobId) { fetch(HORDE_BASE + "/status/" + jobId, { method: "DELETE", headers: HORDE_HEADERS }).catch(()=>{}); }
+    }
+
+    sending = false;
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+
+  imageModeBtn.addEventListener("click", ()=>{
+    imageMode = !imageMode;
+    imageModeBtn.classList.toggle("active", imageMode);
+    styleSelect.style.display = imageMode ? "inline-block" : "none";
+    inputEl.placeholder = imageMode ? "Describe la imagen que quieres…" : "Escribe un mensaje…";
+    showToast(imageMode ? "Modo imagen: gratis, puede tardar por la cola" : "Modo chat");
+  });
 
   function renderConvListIfOpen(){
     if (conversationsOverlay.classList.contains("open")) renderConvList();

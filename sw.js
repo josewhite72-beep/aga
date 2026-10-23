@@ -1,5 +1,5 @@
 // AGI - Asistente Groq API — service worker (network-first, mismo patrón que el resto de PanaMentorLabs)
-const CACHE_NAME = "agi-cache-v1";
+const CACHE_NAME = "agi-cache-v2";
 const APP_SHELL = ["./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", event => {
@@ -20,14 +20,12 @@ self.addEventListener("activate", event => {
 
 self.addEventListener("fetch", event => {
   const req = event.request;
+  const url = new URL(req.url);
 
-  // Nunca cachear llamadas a la API de Groq — siempre red.
-  if (req.url.includes("api.groq.com")) {
-    event.respondWith(fetch(req));
-    return;
-  }
+  // Solo manejamos GET del mismo origen. Todo lo demás (Groq, DeepSeek, AI Horde, CDNs) va directo a la red.
+  if (req.method !== "GET" || url.origin !== self.location.origin) return;
 
-  // Network-first para todo lo demás, con fallback a caché si no hay red.
+  // Network-first con fallback a caché si no hay red.
   event.respondWith(
     fetch(req)
       .then(res => {
