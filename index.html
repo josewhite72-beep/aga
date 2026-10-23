@@ -373,6 +373,35 @@
     "Accept": "application/json"
   };
   const HORDE_TIMEOUT_MS = 4 * 60 * 1000;
+  // Modelos preferidos por estilo (se busca por coincidencia de nombre en el catálogo en vivo de Horde).
+  // Solo familias SD 1.5 que rinden bien a 512 px; si ninguno está disponible, Horde elige solo.
+  const HORDE_PREFERRED = {
+    infantil: ["dreamshaper", "deliberate", "anything", "counterfeit"],
+    fantasia: ["dreamshaper", "deliberate", "fantasy", "midjourney"],
+    foto:     ["realistic vision", "icbinp", "photon", "deliberate"]
+  };
+  const HORDE_EXCLUDE = /xl|flux|cascade|sd ?3|turbo|lightning|inpaint/i;
+  let hordeCatalog = null;
+
+  async function pickHordeModel(styleKey){
+    try {
+      if (!hordeCatalog) {
+        const res = await fetch("https://aihorde.net/api/v2/status/models?type=image", { headers: HORDE_HEADERS });
+        if (!res.ok) return null;
+        hordeCatalog = await res.json();
+      }
+      const available = (hordeCatalog || []).filter(m => m && m.name && m.count > 0 && !HORDE_EXCLUDE.test(m.name));
+      const prefs = HORDE_PREFERRED[styleKey] || [];
+      for (const key of prefs) {
+        const matches = available.filter(m => m.name.toLowerCase().includes(key));
+        if (matches.length) {
+          matches.sort((a, b) => (b.count || 0) - (a.count || 0));
+          return matches[0].name;
+        }
+      }
+    } catch(e){}
+    return null;
+  }
   const IMAGE_STYLES = {
     infantil: {
       suffix: "children's book illustration, flat cartoon style, bright friendly colors, simple shapes, clean outlines, cute",
@@ -973,7 +1002,7 @@
       const out = await streamChatCompletion({
         url: GROQ_URL, apiKey: groqKey, model: "openai/gpt-oss-20b",
         messages: [
-          { role: "system", content: "Convierte la descripción del usuario en un prompt corto en inglés para un modelo de imágenes (Stable Diffusion). Responde SOLO con el prompt en una línea, sin comillas ni explicaciones. El contenido debe ser apto para niños." },
+          { role: "system", content: "Convierte la descripción del usuario en un prompt en inglés para un modelo de imágenes pequeño (Stable Diffusion 1.5). Reglas: escribe UNA sola línea de máximo 25 palabras, sin comillas ni explicaciones; pon primero el sujeto principal; describe la acción o postura de forma explícita (por ejemplo 'holding an open book in its paws', 'sitting and looking down at the book'); pega cada color al objeto que lo tiene ('a yellow cat holding a green book', nunca colores sueltos); NO agregues palabras de estilo (el estilo se agrega aparte) y no menciones 'educational' ni 'child-friendly'. El contenido debe ser apto para niños." },
           { role: "user", content: userText }
         ]
       });
@@ -1047,21 +1076,34 @@
       const englishPrompt = await buildImagePrompt(text, safeGet(STORAGE_KEY_API_GROQ, ""));
       const fullPrompt = englishPrompt + ", " + style.suffix + " ### " + style.negative;
 
+      setStatus("🎨 Buscando el mejor modelo disponible…");
+      const chosenModel = await pickHordeModel(styleSelect.value);
+
       setStatus("🎨 Enviando a la cola de AI Horde…");
-      const submit = await fetch(HORDE_BASE + "/async", {
-        method: "POST",
-        headers: { ...HORDE_HEADERS, "Content-Type": "application/json", "apikey": HORDE_ANON_KEY },
-        body: JSON.stringify({
+      function submitJob(models){
+        const payload = {
           prompt: fullPrompt,
           params: {
-            sampler_name: "k_euler_a", cfg_scale: 7, steps: 25,
+            sampler_name: "k_euler_a", cfg_scale: 7.5, steps: 30,
             width: 512, height: 512, n: 1, karras: true, post_processing: []
           },
           nsfw: false, censor_nsfw: true, trusted_workers: true,
           slow_workers: true, r2: false, shared: false
-        })
-      });
-      const submitJson = await submit.json().catch(() => ({}));
+        };
+        if (models) payload.models = models;
+        return fetch(HORDE_BASE + "/async", {
+          method: "POST",
+          headers: { ...HORDE_HEADERS, "Content-Type": "application/json", "apikey": HORDE_ANON_KEY },
+          body: JSON.stringify(payload)
+        });
+      }
+      let submit = await submitJob(chosenModel ? [chosenModel] : null);
+      let submitJson = await submit.json().catch(() => ({}));
+      if ((!submit.ok || !submitJson.id) && chosenModel) {
+        // El modelo elegido no fue aceptado (p. ej. requiere más prioridad): reintentar dejando que Horde elija.
+        submit = await submitJob(null);
+        submitJson = await submit.json().catch(() => ({}));
+      }
       if (!submit.ok || !submitJson.id) {
         throw new Error(submitJson.message || ("AI Horde respondió " + submit.status));
       }
@@ -1087,7 +1129,11 @@
       const src = gen.img.startsWith("http") ? gen.img : "data:image/webp;base64," + gen.img;
 
       statusRow.remove();
-      renderImageRow(src, 'Prompt usado: "' + englishPrompt + '"', "agi-imagen-" + Date.now() + ".webp");
+      renderImageRow(
+        src,
+        'Prompt usado: "' + englishPrompt + '"' + (gen.model ? " · Modelo: " + gen.model : ""),
+        "agi-imagen-" + Date.now() + ".webp"
+      );
 
       conv.messages.push({
         role: "assistant", kind: "image",
