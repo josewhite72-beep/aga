@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="author" content="JoséWhite's PanaMentorLabs">
-<meta name="description" content="AGI - Asistente Groq API: chat de respaldo cuando se acaban los límites de Claude o ChatGPT">
+<meta name="description" content="AGENT - Autonomous Generative Engine for Networking and Tools: IA de respaldo de PanaMentorLabs sobre Groq">
 <meta name="theme-color" content="#0f1115">
-<title>AGI · Asistente Groq API</title>
+<title>AGENT · PanaMentorLabs</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -75,8 +75,10 @@
   }
   .empty-state{
     margin:auto;text-align:center;color:var(--text-dim);padding:32px 24px;max-width:420px;
+    flex-direction:column;align-items:center;
   }
-  .empty-state .big-icon{font-size:40px;margin-bottom:10px;}
+  .empty-state .big-icon{margin-bottom:12px;line-height:0;}
+  .empty-state .big-icon img{width:88px;height:88px;border-radius:20px;}
   .empty-state h2{color:var(--text);font-size:17px;margin:0 0 8px;}
   .empty-state p{font-size:13.5px;line-height:1.5;margin:0 0 4px;}
 
@@ -249,10 +251,10 @@
 
 <header>
   <div class="brand">
-    <div class="brand-badge" id="brand-badge">AG</div>
+    <div class="brand-badge" id="brand-badge"><img src="icon-192.png" alt="AGENT"></div>
     <div class="brand-text">
-      <h1 id="active-conv-title">AGI</h1>
-      <p>Asistente Groq API</p>
+      <h1 id="active-conv-title">AGENT</h1>
+      <p>PanaMentorLabs · Groq</p>
     </div>
   </div>
   <div class="header-actions">
@@ -264,8 +266,9 @@
 
 <div id="chat">
   <div class="empty-state" id="empty-state">
-    <div class="big-icon">🤖</div>
-    <h2>AGI — tu respaldo cuando se acaban los límites</h2>
+    <div class="big-icon"><img src="icon-192.png" alt="AGENT"></div>
+    <h2>AGENT — tu respaldo cuando se acaban los límites</h2>
+    <p><strong>A</strong>utonomous <strong>G</strong>enerative <strong>E</strong>ngine for <strong>N</strong>etworking and <strong>T</strong>ools</p>
     <p>Corre sobre la capa gratuita de Groq. Rápido, gratis, y listo cuando Claude o ChatGPT te corten por límite.</p>
     <p>Toca ⚙️ para poner tu API key de Groq y empezar.</p>
   </div>
@@ -313,7 +316,7 @@
     <div class="field">
       <label for="deepseek-key-input">API key de DeepSeek (respaldo opcional)</label>
       <input type="password" id="deepseek-key-input" placeholder="sk-...">
-      <div class="hint">Si Groq da error de límite (429) o falla, AGI reintenta sola con DeepSeek. Consíguela en <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">platform.deepseek.com</a></div>
+      <div class="hint">Si Groq da error de límite (429) o falla, AGENT reintenta sola con DeepSeek. Consíguela en <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">platform.deepseek.com</a></div>
     </div>
 
     <div class="field">
@@ -643,15 +646,15 @@
 
   function updateHeaderTitle(){
     const conv = activeConv();
-    activeConvTitleEl.textContent = conv ? conv.title : "AGI";
+    activeConvTitleEl.textContent = conv ? conv.title : "AGENT";
   }
 
   function exportConversation(conv){
     if (!conv || !conv.messages.length) { showToast("Esta conversación está vacía"); return; }
     let md = "# " + conv.title + "\n\n";
-    md += "_Exportado de AGI el " + new Date().toLocaleString("es-PA") + "_\n\n---\n\n";
+    md += "_Exportado de AGENT el " + new Date().toLocaleString("es-PA") + "_\n\n---\n\n";
     conv.messages.forEach(m=>{
-      const who = m.role === "user" ? "**Tú**" : "**AGI**" + (m.viaFallback ? " _(vía DeepSeek)_" : "");
+      const who = m.role === "user" ? "**Tú**" : "**AGENT**" + (m.viaFallback ? " _(vía DeepSeek)_" : "");
       md += who + ":\n\n" + (m.displayContent || m.content) + "\n\n---\n\n";
     });
     downloadText(md, (conv.title || "conversacion").replace(/[^\w\-]+/g, "_") + ".md");
@@ -667,6 +670,12 @@
   }
 
   // ===================== Rendering =====================
+  function setBotAvatar(el){
+    const img = document.createElement("img");
+    img.src = "icon-192.png";
+    img.alt = "AGENT";
+    el.appendChild(img);
+  }
   function escapeHtml(str){
     return str.replace(/[&<>"']/g, c => ({
       "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
@@ -704,7 +713,7 @@
 
     const avatar = document.createElement("div");
     avatar.className = "avatar";
-    avatar.textContent = m.role === "user" ? "Tú" : "AG";
+    if (m.role === "user") avatar.textContent = "Tú"; else setBotAvatar(avatar);
 
     const col = document.createElement("div");
     col.className = "msg-col";
@@ -752,7 +761,7 @@
     row.className = "msg-row assistant";
     row.id = "typing-row";
     const avatar = document.createElement("div");
-    avatar.className = "avatar"; avatar.textContent = "AG";
+    avatar.className = "avatar"; setBotAvatar(avatar);
     const bubble = document.createElement("div");
     bubble.className = "bubble";
     bubble.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
@@ -1024,7 +1033,7 @@
     const row = document.createElement("div");
     row.className = "msg-row assistant";
     const avatar = document.createElement("div");
-    avatar.className = "avatar"; avatar.textContent = "AG";
+    avatar.className = "avatar"; setBotAvatar(avatar);
     const col = document.createElement("div");
     col.className = "msg-col";
     const bubble = document.createElement("div");
