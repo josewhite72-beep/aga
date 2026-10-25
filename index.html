@@ -382,6 +382,7 @@
   const STORAGE_KEY_API_DEEPSEEK = "agi_deepseek_api_key";
   const STORAGE_KEY_SYS          = "agi_system_prompt";
   const STORAGE_KEY_LOCAL_URL    = "agi_local_url";
+  const LOCAL_HISTORY            = 4;       // mensajes de historial que se mandan al modelo local
   const LOCAL_MODEL              = "local"; // llama-server usa el modelo que tenga cargado
   const REMOTE_CONNECT_TIMEOUT   = 20000;   // ms para que Groq/DeepSeek empiecen a responder
   const STORAGE_KEY_MODEL        = "agi_model";
@@ -1015,6 +1016,13 @@
       apiMessages.push({ role: m.role, content: m.content });
     });
 
+    // El modelo local lee el historial mucho más lento: solo los últimos mensajes
+    const localMessages = [];
+    if (systemPrompt) localMessages.push({ role: "system", content: systemPrompt });
+    conv.messages.filter(m => !m.kind).slice(-LOCAL_HISTORY).forEach(m=>{
+      localMessages.push({ role: m.role, content: m.content });
+    });
+
     const typingBubble = renderTyping();
     let streamedBubble = null;
     let usedProvider = null;
@@ -1036,7 +1044,7 @@
         try {
           fullReply = await streamChatCompletion({
             url: p.url, apiKey: p.apiKey, model: p.model,
-            messages: apiMessages, onDelta, connectTimeout: p.connectTimeout
+            messages: p.id === "local" ? localMessages : apiMessages, onDelta, connectTimeout: p.connectTimeout
           });
           usedProvider = p.id;
           lastErr = null;
