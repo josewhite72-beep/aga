@@ -741,6 +741,13 @@
     return u.replace(/\/+$/, "").replace(/\/v1$/i, "");
   }
 
+  // Chrome (Local Network Access) exige declarar que la petición va al propio dispositivo o a la red local
+  function addressSpaceFor(url){
+    if (/^https?:\/\/(127\.|localhost|\[::1\])/i.test(url)) return "loopback";
+    if (/^https?:\/\/(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|[^\/]*\.local\b)/i.test(url)) return "local";
+    return null;
+  }
+
   function renderMessage(m, scroll){
     emptyState.style.display = "none";
     const row = document.createElement("div");
@@ -829,12 +836,15 @@
     const timer = connectTimeout ? setTimeout(()=> ctrl.abort(), connectTimeout) : null;
     let res;
     try {
-      res = await fetch(url, {
+      const opts = {
         method: "POST",
         headers,
         body: JSON.stringify({ model, messages, temperature: 0.7, stream: true }),
         signal: ctrl.signal
-      });
+      };
+      const space = addressSpaceFor(url);
+      if (space) opts.targetAddressSpace = space;
+      res = await fetch(url, opts);
     } catch(netErr){
       const err = new Error(netErr.name === "AbortError" ? "Tiempo de espera agotado" : "Sin conexión con el servidor");
       err.network = true;
@@ -1324,13 +1334,18 @@
     const ctrl = new AbortController();
     const timer = setTimeout(()=> ctrl.abort(), 5000);
     try {
-      const res = await fetch(u + "/v1/models", { signal: ctrl.signal });
+      const opts = { signal: ctrl.signal };
+      const space = addressSpaceFor(u);
+      if (space) opts.targetAddressSpace = space;
+      const res = await fetch(u + "/v1/models", opts);
       const json = await res.json();
       const name = json && json.data && json.data[0] && json.data[0].id ? json.data[0].id.split(/[\\/]/).pop() : "modelo";
       localTestStatus.textContent = "✅ Conectado: " + name;
       if (!localUrlInput.value.trim()) localUrlInput.value = u;
     } catch(e){
-      localTestStatus.textContent = "❌ No responde. Abre Termux y arranca llama-server.";
+      localTestStatus.textContent = e.name === "AbortError"
+        ? "❌ No responde. Abre Termux y arranca llama-server."
+        : "❌ Chrome bloqueó la conexión (" + (e.message || e.name) + "). Revisa el permiso de red local del sitio.";
     } finally { clearTimeout(timer); }
   });
 
