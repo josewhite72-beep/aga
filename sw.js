@@ -1,5 +1,5 @@
 // AGENT (Autonomous Generative Engine for Networking and Tools) — service worker (network-first, mismo patrón que el resto de PanaMentorLabs)
-const CACHE_NAME = "agent-cache-v6";
+const CACHE_NAME = "agent-cache-v7";
 const APP_SHELL = ["./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png", "./icon-maskable-512.png"];
 
 self.addEventListener("install", event => {

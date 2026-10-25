@@ -383,7 +383,12 @@
   const STORAGE_KEY_SYS          = "agi_system_prompt";
   const STORAGE_KEY_LOCAL_URL    = "agi_local_url";
   const LOCAL_HISTORY            = 4;       // mensajes de historial que se mandan al modelo local
-  const LOCAL_MODEL              = "local"; // llama-server usa el modelo que tenga cargado
+  const LOCAL_MODEL              = "local";
+  const LOCAL_SYSTEM_PROMPT =
+    "Eres AGENT, el asistente de PanaMentorLabs, funcionando SIN internet con un modelo pequeño dentro del teléfono del usuario. " +
+    "No tienes acceso a internet, noticias, precios ni datos recientes, y tu conocimiento es limitado. " +
+    "Si no estás seguro de un dato, dilo claramente en lugar de inventarlo. No exageres tus capacidades. " +
+    "Responde en el idioma del usuario, de forma breve, clara y directa."; // llama-server usa el modelo que tenga cargado
   const REMOTE_CONNECT_TIMEOUT   = 20000;   // ms para que Groq/DeepSeek empiecen a responder
   const STORAGE_KEY_MODEL        = "agi_model";
   const STORAGE_KEY_CONVS        = "agi_conversations";
@@ -691,10 +696,29 @@
   }
 
   // ===================== Rendering =====================
+  // Copia del logo en memoria (data URL) para que el avatar se vea aunque no haya internet
+  let avatarSrc = "icon-192.png";
+  (function cacheAvatar(){
+    const brandImg = document.querySelector("#brand-badge img");
+    if (!brandImg) return;
+    const grab = ()=>{
+      try {
+        const c = document.createElement("canvas");
+        c.width = c.height = 96;
+        c.getContext("2d").drawImage(brandImg, 0, 0, 96, 96);
+        avatarSrc = c.toDataURL("image/png");
+        document.querySelectorAll("img.bot-avatar-img").forEach(i => { i.src = avatarSrc; });
+      } catch(e){}
+    };
+    if (brandImg.complete && brandImg.naturalWidth) grab(); else brandImg.addEventListener("load", grab, { once: true });
+  })();
+
   function setBotAvatar(el){
     const img = document.createElement("img");
-    img.src = "icon-192.png";
+    img.className = "bot-avatar-img";
+    img.src = avatarSrc;
     img.alt = "AGENT";
+    img.addEventListener("error", ()=>{ el.textContent = "🤖"; }, { once: true });
     el.appendChild(img);
   }
   function escapeHtml(str){
@@ -704,9 +728,19 @@
   }
   function formatContent(str){
     let safe = escapeHtml(str);
-    safe = safe.replace(/```([\s\S]*?)```/g, (m, code) => "<pre><code>" + code.trim() + "</code></pre>");
-    safe = safe.replace(/`([^`]+)`/g, "<code>$1</code>");
-    return safe;
+    // Guardar el código aparte para que no le afecte el formato
+    const stash = [];
+    const keep = html => "\u0000" + (stash.push(html) - 1) + "\u0000";
+    safe = safe.replace(/```([\s\S]*?)```/g, (m, code) => keep("<pre><code>" + code.replace(/^\w*\n/, "").trim() + "</code></pre>"));
+    safe = safe.replace(/`([^`\n]+)`/g, (m, code) => keep("<code>" + code + "</code>"));
+    // Títulos (#, ##, ###) → negrita
+    safe = safe.replace(/^#{1,6}\s+(.+)$/gm, "<strong>$1</strong>");
+    // **negrita** y __negrita__
+    safe = safe.replace(/\*\*([^*\n]+?)\*\*/g, "<strong>$1</strong>");
+    safe = safe.replace(/__([^_\n]+?)__/g, "<strong>$1</strong>");
+    // *cursiva* (sin confundir viñetas "* item")
+    safe = safe.replace(/(^|[^*\w])\*([^*\s][^*\n]*?)\*(?!\w)/g, "$1<em>$2</em>");
+    return safe.replace(/\u0000(\d+)\u0000/g, (m, i) => stash[+i]);
   }
 
   function clearChatEl(){
@@ -1017,8 +1051,7 @@
     });
 
     // El modelo local lee el historial mucho más lento: solo los últimos mensajes
-    const localMessages = [];
-    if (systemPrompt) localMessages.push({ role: "system", content: systemPrompt });
+    const localMessages = [{ role: "system", content: LOCAL_SYSTEM_PROMPT + (systemPrompt ? "\n\n" + systemPrompt : "") }];
     conv.messages.filter(m => !m.kind).slice(-LOCAL_HISTORY).forEach(m=>{
       localMessages.push({ role: m.role, content: m.content });
     });
