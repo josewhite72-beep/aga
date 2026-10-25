@@ -118,6 +118,10 @@
   .msg-action{background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;padding:0;}
   .msg-action:active{color:var(--text);}
   .fallback-tag{color:#e8b339;}
+  .local-tag{color:#5fc48a;}
+  .test-row{display:flex;align-items:center;gap:10px;margin-top:8px;}
+  .test-row .btn{flex:0 0 auto;padding:7px 12px;font-size:12px;}
+  .test-row span{font-size:11px;color:var(--text-dim);}
   .stream-cursor{display:inline-block;width:7px;height:14px;background:var(--text-dim);margin-left:2px;animation:blink 1s infinite;vertical-align:middle;}
 
   .typing{display:flex;gap:4px;padding:6px 2px;}
@@ -320,6 +324,16 @@
     </div>
 
     <div class="field">
+      <label for="local-url-input">Servidor local sin internet (opcional)</label>
+      <input type="text" id="local-url-input" placeholder="http://127.0.0.1:8080" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div class="hint">Modelo corriendo en este teléfono (llama.cpp en Termux). Se usa solo si no hay internet o si Groq y DeepSeek fallan. Déjalo vacío para desactivarlo.</div>
+      <div class="test-row">
+        <button class="btn btn-secondary" id="local-test-btn" type="button">Probar conexión</button>
+        <span id="local-test-status"></span>
+      </div>
+    </div>
+
+    <div class="field">
       <label for="system-prompt-input">Instrucción del sistema (opcional)</label>
       <input type="text" id="system-prompt-input" placeholder="Ej: Responde en español, sé directo y conciso">
     </div>
@@ -367,6 +381,9 @@
   const STORAGE_KEY_API_GROQ     = "agi_groq_api_key";
   const STORAGE_KEY_API_DEEPSEEK = "agi_deepseek_api_key";
   const STORAGE_KEY_SYS          = "agi_system_prompt";
+  const STORAGE_KEY_LOCAL_URL    = "agi_local_url";
+  const LOCAL_MODEL              = "local"; // llama-server usa el modelo que tenga cargado
+  const REMOTE_CONNECT_TIMEOUT   = 20000;   // ms para que Groq/DeepSeek empiecen a responder
   const STORAGE_KEY_MODEL        = "agi_model";
   const STORAGE_KEY_CONVS        = "agi_conversations";
   const STORAGE_KEY_ACTIVE       = "agi_active_conv_id";
@@ -438,6 +455,9 @@
   const settingsSaveBtn = document.getElementById("settings-save-btn");
   const apiKeyInput = document.getElementById("api-key-input");
   const deepseekKeyInput = document.getElementById("deepseek-key-input");
+  const localUrlInput = document.getElementById("local-url-input");
+  const localTestBtn = document.getElementById("local-test-btn");
+  const localTestStatus = document.getElementById("local-test-status");
   const systemPromptInput = document.getElementById("system-prompt-input");
   const clearCacheBtn = document.getElementById("clear-cache-btn");
   const toastEl = document.getElementById("toast");
@@ -654,7 +674,7 @@
     let md = "# " + conv.title + "\n\n";
     md += "_Exportado de AGENT el " + new Date().toLocaleString("es-PA") + "_\n\n---\n\n";
     conv.messages.forEach(m=>{
-      const who = m.role === "user" ? "**Tú**" : "**AGENT**" + (m.viaFallback ? " _(vía DeepSeek)_" : "");
+      const who = m.role === "user" ? "**Tú**" : "**AGENT**" + (viaLabel(m) ? " _(vía " + viaLabel(m) + ")_" : "");
       md += who + ":\n\n" + (m.displayContent || m.content) + "\n\n---\n\n";
     });
     downloadText(md, (conv.title || "conversacion").replace(/[^\w\-]+/g, "_") + ".md");
@@ -706,6 +726,21 @@
     chatEl.scrollTop = chatEl.scrollHeight;
   }
 
+  // Etiqueta del proveedor que respondió (compatible con mensajes viejos que solo tenían viaFallback)
+  function viaLabel(m){
+    if (m.via === "local") return "modelo local";
+    if (m.via === "deepseek" || m.viaFallback) return "DeepSeek";
+    return "";
+  }
+
+  // Normaliza la URL del servidor local: sin barra final y sin /v1 repetido
+  function localBaseUrl(){
+    let u = safeGet(STORAGE_KEY_LOCAL_URL, "").trim();
+    if (!u) return "";
+    if (!/^https?:\/\//i.test(u)) u = "http://" + u;
+    return u.replace(/\/+$/, "").replace(/\/v1$/i, "");
+  }
+
   function renderMessage(m, scroll){
     emptyState.style.display = "none";
     const row = document.createElement("div");
@@ -733,10 +768,11 @@
     const meta = document.createElement("div");
     meta.className = "msg-meta";
     if (m.role === "assistant" && !m.kind) {
-      if (m.viaFallback) {
+      const via = viaLabel(m);
+      if (via) {
         const tag = document.createElement("span");
-        tag.className = "fallback-tag";
-        tag.textContent = "vía DeepSeek";
+        tag.className = via === "modelo local" ? "local-tag" : "fallback-tag";
+        tag.textContent = (via === "modelo local" ? "📴 " : "") + "vía " + via;
         meta.appendChild(tag);
       }
       const dl = document.createElement("button");
@@ -784,15 +820,28 @@
 
   // ===================== Streaming fetch helper =====================
   // Llama a un endpoint OpenAI-compatible con stream:true y va entregando el texto parcial via onDelta.
-  async function streamChatCompletion({ url, apiKey, model, messages, onDelta }){
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + apiKey
-      },
-      body: JSON.stringify({ model, messages, temperature: 0.7, stream: true })
-    });
+  async function streamChatCompletion({ url, apiKey, model, messages, onDelta, connectTimeout }){
+    const headers = { "Content-Type": "application/json" };
+    if (apiKey) headers["Authorization"] = "Bearer " + apiKey;
+
+    // Si la señal es mala, fetch puede quedarse colgado: cortamos si no llegan cabeceras a tiempo.
+    const ctrl = new AbortController();
+    const timer = connectTimeout ? setTimeout(()=> ctrl.abort(), connectTimeout) : null;
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ model, messages, temperature: 0.7, stream: true }),
+        signal: ctrl.signal
+      });
+    } catch(netErr){
+      const err = new Error(netErr.name === "AbortError" ? "Tiempo de espera agotado" : "Sin conexión con el servidor");
+      err.network = true;
+      throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
 
     if (!res.ok) {
       let errMsg = "Error " + res.status;
@@ -900,7 +949,18 @@
     if (!typed && !attachedFile) return;
 
     const groqKey = safeGet(STORAGE_KEY_API_GROQ, "");
-    if (!groqKey) {
+    const deepseekKey = safeGet(STORAGE_KEY_API_DEEPSEEK, "");
+    const localBase = localBaseUrl();
+    const online = navigator.onLine !== false;
+
+    // Cadena de proveedores: Groq → DeepSeek → modelo local. Sin internet, directo al local.
+    const providers = [];
+    if (online && groqKey) providers.push({ id: "groq", url: GROQ_URL, apiKey: groqKey, model: modelSelect.value, connectTimeout: REMOTE_CONNECT_TIMEOUT });
+    if (online && deepseekKey) providers.push({ id: "deepseek", url: DEEPSEEK_URL, apiKey: deepseekKey, model: DEEPSEEK_MODEL, connectTimeout: REMOTE_CONNECT_TIMEOUT });
+    if (localBase) providers.push({ id: "local", url: localBase + "/v1/chat/completions", apiKey: "", model: LOCAL_MODEL });
+
+    if (!providers.length) {
+      if (!online) { showToast("Sin internet. Configura el servidor local para usar AGENT offline."); openSettings(); return; }
       openSettings();
       showToast("Primero agrega tu API key de Groq");
       return;
@@ -947,7 +1007,7 @@
 
     const typingBubble = renderTyping();
     let streamedBubble = null;
-    let usedFallback = false;
+    let usedProvider = null;
 
     function onDelta(full){
       if (!streamedBubble) {
@@ -960,31 +1020,34 @@
 
     try {
       let fullReply = "";
-      try {
-        fullReply = await streamChatCompletion({
-          url: GROQ_URL, apiKey: groqKey, model: modelSelect.value,
-          messages: apiMessages, onDelta
-        });
-      } catch(groqErr){
-        const deepseekKey = safeGet(STORAGE_KEY_API_DEEPSEEK, "");
-        const retryable = groqErr.status === 429 || groqErr.status >= 500 || !groqErr.status;
-        if (deepseekKey && retryable) {
-          usedFallback = true;
-          if (streamedBubble) { streamedBubble.parentElement.parentElement.remove(); streamedBubble = null; }
+      let lastErr = null;
+      for (let i = 0; i < providers.length; i++) {
+        const p = providers[i];
+        try {
           fullReply = await streamChatCompletion({
-            url: DEEPSEEK_URL, apiKey: deepseekKey, model: DEEPSEEK_MODEL,
-            messages: apiMessages, onDelta
+            url: p.url, apiKey: p.apiKey, model: p.model,
+            messages: apiMessages, onDelta, connectTimeout: p.connectTimeout
           });
-        } else {
-          throw groqErr;
+          usedProvider = p.id;
+          lastErr = null;
+          break;
+        } catch(err){
+          lastErr = err;
+          lastErr.provider = p.id;
+          const retryable = err.network || err.status === 429 || err.status >= 500 || !err.status;
+          const hasNext = i < providers.length - 1;
+          if (!(retryable && hasNext)) break;
+          if (streamedBubble) { streamedBubble.parentElement.parentElement.remove(); streamedBubble = null; }
+          if (providers[i + 1].id === "local") showToast("📴 Usando el modelo local…");
         }
       }
+      if (lastErr) throw lastErr;
 
       removeTyping();
       if (!streamedBubble) streamedBubble = renderMessage({ role: "assistant", content: "" });
       streamedBubble.innerHTML = formatContent(fullReply || "(Respuesta vacía)");
 
-      const assistantMsg = { role: "assistant", content: fullReply || "(Respuesta vacía)", viaFallback: usedFallback };
+      const assistantMsg = { role: "assistant", content: fullReply || "(Respuesta vacía)", via: usedProvider };
       conv.messages.push(assistantMsg);
       touchConversation(conv);
 
@@ -997,6 +1060,7 @@
       removeTyping();
       if (streamedBubble) streamedBubble.parentElement.parentElement.remove();
       let msg = err.message || "No se pudo conectar.";
+      if (err.provider === "local") msg = "No respondió el modelo local (" + localBase + "). ¿Está corriendo llama-server en Termux?";
       if (err.status === 401) msg = "API key inválida o vencida. Revísala en Configuración.";
       if (err.status === 429) msg = "Límite de la capa gratuita alcanzado. " +
         (safeGet(STORAGE_KEY_API_DEEPSEEK,"") ? "El respaldo con DeepSeek también falló." : "Agrega una API key de DeepSeek en Configuración para respaldo automático.");
@@ -1232,6 +1296,8 @@
   function openSettings(){
     apiKeyInput.value = safeGet(STORAGE_KEY_API_GROQ, "");
     deepseekKeyInput.value = safeGet(STORAGE_KEY_API_DEEPSEEK, "");
+    localUrlInput.value = safeGet(STORAGE_KEY_LOCAL_URL, "");
+    localTestStatus.textContent = "";
     systemPromptInput.value = safeGet(STORAGE_KEY_SYS, "");
     settingsOverlay.classList.add("open");
   }
@@ -1244,9 +1310,28 @@
   settingsSaveBtn.addEventListener("click", ()=>{
     safeSet(STORAGE_KEY_API_GROQ, apiKeyInput.value.trim());
     safeSet(STORAGE_KEY_API_DEEPSEEK, deepseekKeyInput.value.trim());
+    safeSet(STORAGE_KEY_LOCAL_URL, localUrlInput.value.trim());
     safeSet(STORAGE_KEY_SYS, systemPromptInput.value.trim());
     closeSettings();
     showToast("Configuración guardada");
+  });
+
+  localTestBtn.addEventListener("click", async ()=>{
+    let u = localUrlInput.value.trim() || "http://127.0.0.1:8080";
+    if (!/^https?:\/\//i.test(u)) u = "http://" + u;
+    u = u.replace(/\/+$/, "").replace(/\/v1$/i, "");
+    localTestStatus.textContent = "Probando…";
+    const ctrl = new AbortController();
+    const timer = setTimeout(()=> ctrl.abort(), 5000);
+    try {
+      const res = await fetch(u + "/v1/models", { signal: ctrl.signal });
+      const json = await res.json();
+      const name = json && json.data && json.data[0] && json.data[0].id ? json.data[0].id.split(/[\\/]/).pop() : "modelo";
+      localTestStatus.textContent = "✅ Conectado: " + name;
+      if (!localUrlInput.value.trim()) localUrlInput.value = u;
+    } catch(e){
+      localTestStatus.textContent = "❌ No responde. Abre Termux y arranca llama-server.";
+    } finally { clearTimeout(timer); }
   });
 
   clearCacheBtn.addEventListener("click", async ()=>{
